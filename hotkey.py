@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-Gemini CLI Launcher - Shift + Double Middle-Click Version
-Hold Shift and double middle-click any window to launch Gemini in that context
+Gemini CLI Launcher - Double Middle-Click Version
+Double middle-click any window to launch Gemini in that context
 """
 
 import os
@@ -16,13 +16,41 @@ import threading
 import sys
 from pynput import mouse, keyboard
 
-class GeminiHotkey:
+class GeminiDoubleMiddleClick:
     def __init__(self):
         self.running = True
         self.last_middle_click_time = 0
+        self.last_click_pos = (0, 0)
         self.double_click_threshold = 0.5  # 500ms
-        self.shift_pressed = False
+        self.shift_pressed = False  # Track if Shift key is held
         
+    def get_explorer_path_com(self, hwnd):
+        """Get Explorer path using COM in a thread-safe way"""
+        result = [None]  # Use list to store result from thread
+        
+        def get_path():
+            try:
+                pythoncom.CoInitialize()
+                shell = win32com.client.Dispatch("Shell.Application")
+                for window in shell.Windows():
+                    try:
+                        if window.HWND == hwnd:
+                            result[0] = window.Document.Folder.Self.Path
+                            break
+                    except:
+                        continue
+                pythoncom.CoUninitialize()
+            except Exception as e:
+                print(f"COM Error details: {e}")
+                pythoncom.CoUninitialize()
+        
+        # Run in thread to ensure proper COM initialization
+        thread = threading.Thread(target=get_path)
+        thread.start()
+        thread.join(timeout=2.0)  # Wait max 2 seconds
+        
+        return result[0]
+    
     def get_path_from_window(self, x, y):
         """Get path from window at coordinates"""
         try:
@@ -54,17 +82,45 @@ class GeminiHotkey:
             
             # Method 1: File Explorer - get actual folder being viewed
             if process_name == 'explorer.exe' and window_class == 'CabinetWClass':
-                try:
-                    pythoncom.CoInitialize()
-                    shell = win32com.client.Dispatch("Shell.Application")
-                    for window in shell.Windows():
-                        if window.HWND == hwnd:
-                            path = window.Document.Folder.Self.Path
-                            pythoncom.CoUninitialize()
-                            return path
-                    pythoncom.CoUninitialize()
-                except:
-                    pythoncom.CoUninitialize()
+                print("Detected File Explorer window")
+                
+                # Try COM approach
+                path = self.get_explorer_path_com(hwnd)
+                if path:
+                    print(f"Explorer path found via COM: {path}")
+                    return path
+                
+                # Fallback: Try to extract from window title
+                # File Explorer format: "FolderName - File Explorer" or just "FolderName"
+                if window_title:
+                    # Remove " - File Explorer" suffix if present
+                    folder_part = window_title.replace(" - File Explorer", "").strip()
+                    
+                    # Check if it's a full path
+                    if os.path.exists(folder_part):
+                        print(f"Found full path in title: {folder_part}")
+                        return folder_part
+                    
+                    # Try to find in common locations
+                    common_paths = [
+                        os.path.expanduser(f"~\\{folder_part}"),
+                        os.path.expanduser(f"~\\Desktop\\{folder_part}"),
+                        os.path.expanduser(f"~\\Documents\\{folder_part}"),
+                        os.path.expanduser(f"~\\Downloads\\{folder_part}"),
+                        f"C:\\{folder_part}",
+                        f"D:\\{folder_part}",
+                    ]
+                    
+                    for test_path in common_paths:
+                        if os.path.exists(test_path) and os.path.isdir(test_path):
+                            print(f"Found folder from title: {test_path}")
+                            return test_path
+                    
+                    # Special case for 'Desktop' which might just show as "Desktop"
+                    if folder_part.lower() == "desktop":
+                        desktop = os.path.expanduser("~\\Desktop")
+                        print(f"Desktop folder detected: {desktop}")
+                        return desktop
             
             # Method 2: For editors, check command line for opened folders
             if any(editor in process_name for editor in ['code.exe', 'cursor.exe', 'sublime_text.exe']):
@@ -153,7 +209,77 @@ class GeminiHotkey:
                 except:
                     pass
             
-            # Method 4: Extract from window title (last resort)
+            # Method 4: For browsers - try to get Downloads or Desktop folder
+            if any(browser in process_name for browser in ['chrome.exe', 'firefox.exe', 'msedge.exe', 'brave.exe', 'opera.exe']):
+                print(f"Detected browser: {process_name}")
+                
+                # For browsers, we can't get the current page's context easily
+                # But we can make smart defaults:
+                
+                # If the title contains common code-related terms, use a project folder
+                title_lower = window_title.lower()
+                if any(term in title_lower for term in ['github', 'gitlab', 'bitbucket', 'localhost:', '127.0.0.1', 'codepen', 'jsfiddle', 'stackoverflow']):
+                    # Try to extract project name from title
+                    if 'github.com' in title_lower:
+                        # GitHub URLs often have format: "repo-name · owner/repo-name"
+                        import re
+                        match = re.search(r'([^/\s]+/[^/\s]+)', window_title)
+                        if match:
+                            repo_name = match.group(1).split('/')[-1]
+                            print(f"Detected GitHub repo: {repo_name}")
+                            # Look for this repo in common locations
+                            search_paths = [
+                                os.path.dirname(os.path.abspath(__file__)),
+                                os.getcwd(),
+                                os.path.expanduser("~\\source\\repos"),
+                                os.path.expanduser("~\\Documents\\GitHub"),
+                                os.path.expanduser("~\\Documents"),
+                                os.path.expanduser("~\\Desktop"),
+                                "C:\\projects",
+                                "D:\\projects"
+                            ]
+                            for search_path in search_paths:
+                                test_path = os.path.join(search_path, repo_name)
+                                if os.path.exists(test_path) and os.path.isdir(test_path):
+                                    print(f"Found matching repo folder: {test_path}")
+                                    return test_path
+                    
+                # Also check clipboard for URLs that might give context
+                try:
+                    clipboard = pyperclip.paste()
+                    if clipboard and 'github.com' in clipboard.lower():
+                        # Extract repo name from GitHub URL
+                        import re
+                        match = re.search(r'github\.com/([^/]+)/([^/\s\?]+)', clipboard)
+                        if match:
+                            repo_name = match.group(2).replace('.git', '')
+                            print(f"Found GitHub URL in clipboard: {repo_name}")
+                            # Search for this repo
+                            for search_path in search_paths:
+                                test_path = os.path.join(search_path, repo_name)
+                                if os.path.exists(test_path) and os.path.isdir(test_path):
+                                    print(f"Found repo from clipboard: {test_path}")
+                                    return test_path
+                except:
+                    pass
+                    dev_folders = [
+                        os.path.expanduser("~\\source\\repos"),
+                        os.path.expanduser("~\\Documents\\GitHub"),
+                        os.path.expanduser("~\\projects"),
+                        "C:\\projects"
+                    ]
+                    for folder in dev_folders:
+                        if os.path.exists(folder):
+                            print(f"Using development folder: {folder}")
+                            return folder
+                
+                # For general browsing, use Downloads (likely downloading files)
+                downloads = os.path.expanduser("~\\Downloads")
+                if os.path.exists(downloads):
+                    print(f"Browser detected, using Downloads: {downloads}")
+                    return downloads
+            
+            # Method 5: Extract from window title (last resort)
             if window_title:
                 import re
                 match = re.search(r'([A-Z]:\\[^<>:"|*?\[\]]+?)(?:\s|$|"|\'|-)', window_title)
@@ -205,10 +331,11 @@ class GeminiHotkey:
     
     def on_click(self, x, y, button, pressed):
         """Handle mouse clicks"""
+        # Only process if Shift is held down
+        if not self.shift_pressed:
+            return
+            
         if button == mouse.Button.middle and pressed:
-            if not self.shift_pressed:
-                return
-
             current_time = time.time()
             
             # Check if it's a double-click
@@ -229,6 +356,7 @@ class GeminiHotkey:
             else:
                 # First click
                 self.last_middle_click_time = current_time
+                self.last_click_pos = (x, y)
     
     def run(self):
         """Run the mouse and keyboard listeners"""
@@ -270,7 +398,7 @@ def main():
         print("Please restart the script")
         return
     
-    launcher = GeminiHotkey()
+    launcher = GeminiDoubleMiddleClick()
     launcher.run()
 
 if __name__ == "__main__":
