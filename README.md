@@ -4,8 +4,6 @@ A simple Windows utility that allows you to instantly launch the [Google Gemini 
 
 This tool is perfect for developers, writers, and anyone who wants a faster way to interact with Gemini without constantly switching windows or manually navigating `cd` commands in a terminal.
 
-![Demo GIF (to be created)](https://via.placeholder.com/700x400.png?text=Demo+of+Shift+%2B+Double+Middle-Click)
-
 ## Features
 
 - **Context-Aware Launching**: Hold **Shift** and **double middle-click** on a window, and the Gemini CLI will start with its working directory set to that application's folder.
@@ -25,7 +23,7 @@ This tool is perfect for developers, writers, and anyone who wants a faster way 
 ## Installation
 
 1.  Make sure you have met all the prerequisites.
-2.  Download the latest release from the [Releases](https://github.com/YOUR_USERNAME/YOUR_REPOSITORY/releases) page or clone this repository.
+2.  Download the latest release from the [Releases](https://github.com/hexcreator/gcli-hotkey/releases) page or clone this repository.
 3.  Right-click on `install.bat` and select **"Run as administrator"**.
 4.  Follow the on-screen instructions. The installer will copy the necessary files and add the hotkey to your Windows startup programs.
 
