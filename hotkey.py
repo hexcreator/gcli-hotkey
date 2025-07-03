@@ -14,6 +14,8 @@ import pythoncom
 import time
 import threading
 import sys
+import pyperclip
+from PIL import ImageGrab
 from pynput import mouse, keyboard
 
 class GeminiDoubleMiddleClick:
@@ -23,8 +25,35 @@ class GeminiDoubleMiddleClick:
         self.last_click_pos = (0, 0)
         self.double_click_threshold = 0.5  # 500ms
         self.shift_pressed = False  # Track if Shift key is held
+        self.last_screenshot = None  # Track last screenshot path
         
-    def get_explorer_path_com(self, hwnd):
+    def capture_window_to_file(self, hwnd, save_dir):
+        """Capture a window screenshot to a file"""
+        print(f"Attempting to capture screenshot...")
+        try:
+            # Get window rectangle
+            rect = win32gui.GetWindowRect(hwnd)
+            x, y, right, bottom = rect
+            print(f"Window rect: {x}, {y}, {right}, {bottom}")
+            
+            # Capture the window
+            screenshot = ImageGrab.grab(bbox=(x, y, right, bottom))
+            
+            # Save to file with timestamp
+            timestamp = time.strftime("%Y%m%d_%H%M%S")
+            filename = f"browser_screenshot_{timestamp}.png"
+            filepath = os.path.join(save_dir, filename)
+            
+            screenshot.save(filepath, "PNG")
+            
+            print(f"✓ Screenshot saved: {filename}")
+            print(f"  Full path: {filepath}")
+            return filepath
+        except Exception as e:
+            print(f"Screenshot error: {e}")
+            import traceback
+            traceback.print_exc()
+            return None
         """Get Explorer path using COM in a thread-safe way"""
         result = [None]  # Use list to store result from thread
         
@@ -53,6 +82,9 @@ class GeminiDoubleMiddleClick:
     
     def get_path_from_window(self, x, y):
         """Get path from window at coordinates"""
+        # Reset screenshot path
+        self.last_screenshot = None
+        
         try:
             # Get window at point
             hwnd = win32gui.WindowFromPoint((x, y))
@@ -187,7 +219,29 @@ class GeminiDoubleMiddleClick:
                                     print(f"Found folder in {search_path}: {test_path}")
                                     return test_path
             
-            # Method 3: Get process working directory (not exe location)
+            # Method 3: Browsers - take screenshot and use Downloads folder
+            if any(browser in process_name for browser in ['chrome.exe', 'firefox.exe', 'msedge.exe', 'brave.exe', 'opera.exe', 'vivaldi.exe']):
+                print(f"Detected browser: {process_name}")
+                
+                # Use Downloads folder as default for browsers
+                downloads = os.path.expanduser("~\\Downloads")
+                if not os.path.exists(downloads):
+                    downloads = os.path.expanduser("~\\Documents")
+                
+                # Take screenshot of browser window and save to the folder
+                screenshot_path = self.capture_window_to_file(hwnd, downloads)
+                if screenshot_path:
+                    # Store the screenshot path to reference it later
+                    self.last_screenshot = screenshot_path
+                    print(f"Screenshot saved: {screenshot_path}")
+                else:
+                    self.last_screenshot = None
+                    print("Failed to capture screenshot")
+                
+                print(f"Using Downloads folder for browser context: {downloads}")
+                return downloads
+            
+            # Method 4: Get process working directory (not exe location)
             try:
                 cwd = process.cwd()
                 # Only use if it's not a system directory
@@ -196,6 +250,28 @@ class GeminiDoubleMiddleClick:
                     return cwd
             except:
                 pass
+            
+            # Method 4: Browsers - take screenshot and use Downloads folder
+            if any(browser in process_name for browser in ['chrome.exe', 'firefox.exe', 'msedge.exe', 'brave.exe', 'opera.exe', 'vivaldi.exe']):
+                print(f"Detected browser: {process_name}")
+                
+                # Use Downloads folder as default for browsers
+                downloads = os.path.expanduser("~\\Downloads")
+                if not os.path.exists(downloads):
+                    downloads = os.path.expanduser("~\\Documents")
+                
+                # Take screenshot of browser window and save to the folder
+                screenshot_path = self.capture_window_to_file(hwnd, downloads)
+                if screenshot_path:
+                    # Store the screenshot path to reference it later
+                    self.last_screenshot = screenshot_path
+                    print(f"Screenshot saved: {screenshot_path}")
+                else:
+                    self.last_screenshot = None
+                    print("Failed to capture screenshot")
+                
+                print(f"Using Downloads folder for browser context: {downloads}")
+                return downloads
             
             # Method 3: For editors, check command line for opened folders
             if any(editor in process_name for editor in ['code.exe', 'cursor.exe', 'sublime_text.exe']):
@@ -299,11 +375,25 @@ class GeminiDoubleMiddleClick:
         print(f"Using default: {default}")
         return default
     
-    def launch_gemini(self, path):
+    def launch_gemini(self, path, is_browser=False):
         """Launch Gemini in the specified path"""
         print(f"Launching Gemini in: {path}")
         
+        if is_browser and self.last_screenshot:
+            screenshot_name = os.path.basename(self.last_screenshot)
+            # Copy the @filename to clipboard for easy pasting
+            reference = f"@{screenshot_name}"
+            try:
+                pyperclip.copy(reference)
+                print(f"\n💡 Browser screenshot saved as: {screenshot_name}")
+                print(f"   '{reference}' copied to clipboard - just paste it!")
+                print(f"   Example prompt: 'Explain what's shown in {reference}'")
+            except:
+                print(f"\n💡 Browser screenshot saved as: {screenshot_name}")
+                print(f"   Type '@{screenshot_name}' in Gemini to reference it")
+        
         try:
+            # Just launch Gemini normally - files are referenced within prompts
             subprocess.Popen(
                 f'start "Gemini CLI" cmd /k "cd /d "{path}" && gemini"',
                 shell=True
@@ -343,11 +433,16 @@ class GeminiDoubleMiddleClick:
                 # Double-click detected!
                 print(f"\n🖱️ Shift + Double middle-click at ({x}, {y})")
                 
-                # Get path and launch in separate thread
+                # Get path and check if browser
                 path = self.get_path_from_window(x, y)
+                
+                # Check if we captured a screenshot (indicates browser)
+                is_browser = self.last_screenshot is not None
+                
+                # Launch in separate thread
                 threading.Thread(
                     target=self.launch_gemini,
-                    args=(path,),
+                    args=(path, is_browser),
                     daemon=True
                 ).start()
                 

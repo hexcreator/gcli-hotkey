@@ -82,11 +82,11 @@ def main():
         print("\nNo old processes found")
     
     # Start new version
-    if start_new_version():
-        print("\n✅ Success! The new Shift + double middle-click version is now running")
-        print("\nYou can close this window")
-    else:
-        print("\n❌ Failed to start new version")
+    # if start_new_version():
+    #     print("\n✅ Success! The new Shift + double middle-click version is now running")
+    #     print("\nYou can close this window")
+    # else:
+    #     print("\n❌ Failed to start new version")
 
 if __name__ == "__main__":
     main()
